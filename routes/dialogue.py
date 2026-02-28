@@ -65,7 +65,7 @@ async def chat_with_npc(req: DialogueRequest) -> DialogueResponse:
         temperature=0.85,
     )
 
-    npc_reply = completion.choices[0].message.content
+    npc_reply = completion.choices[0].message.content or "*(silence)*"
 
     # Persist turn in history (without the system prompt)
     _history[history_key].append({"role": "user", "content": req.player_message})
