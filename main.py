@@ -6,8 +6,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from agents.npcs import NPC_COLORS, NPCS, PERSONS, QUEST_0
+from agents.npcs import NPC_COLORS, NPCS, PERSONS
 from routes.dialogue import router as dialogue_router
+from routes.quest import router as quest_router
 
 load_dotenv()
 
@@ -44,6 +45,7 @@ app.add_middleware(
 )
 
 app.include_router(dialogue_router)
+app.include_router(quest_router)
 
 
 @app.get("/health")
@@ -74,18 +76,3 @@ async def list_npcs() -> dict:
     }
 
 
-@app.get("/quest")
-async def get_quest() -> dict:
-    """Active quest — MVP always returns QUEST_0."""
-    return {
-        "quest_id": QUEST_0.quest_id,
-        "title": QUEST_0.title,
-        "description": QUEST_0.description,
-        "solution": QUEST_0.solution,
-        "red_herrings": QUEST_0.red_herrings,
-        # Expose only hints to the frontend, never secrets
-        "clues": sorted(
-            [{"npc_id": c.npc_id, "hint": c.hint, "sequence": c.sequence, "leads_to": c.leads_to} for c in QUEST_0.clues],
-            key=lambda c: c["sequence"],
-        ),
-    }

@@ -1,9 +1,11 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from mistralai import Mistral
 import os
-import wandb
 
+import wandb
+from fastapi import APIRouter, HTTPException
+from mistralai import Mistral
+from pydantic import BaseModel
+
+import state as app_state
 from agents.npcs import NPCS
 
 router = APIRouter(prefix="/dialogue", tags=["dialogue"])
@@ -54,7 +56,20 @@ async def chat_with_npc(req: DialogueRequest) -> DialogueResponse:
     if history_key not in _history:
         _history[history_key] = []
 
-    messages = [{"role": "system", "content": npc.system_prompt}]
+    # Inject the active quest's clue secret for this NPC so it can hint correctly
+    system_content = npc.system_prompt
+    active_quest = app_state.active_quests.get(req.session_id)
+    if active_quest:
+        for clue in active_quest.clues:
+            if clue.npc_id == req.npc_id:
+                system_content += (
+                    f"\n\n[QUEST DIRECTIVE — do NOT quote this verbatim]: "
+                    f"You secretly know: {clue.secret} "
+                    f"When relevant, hint at: \"{clue.hint}\""
+                )
+                break
+
+    messages = [{"role": "system", "content": system_content}]
     messages.extend(_history[history_key])
     messages.append({"role": "user", "content": req.player_message})
 

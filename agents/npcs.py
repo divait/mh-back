@@ -88,28 +88,20 @@ QUEST_0 = Quest(
             sequence=3,
             leads_to="cabaret_dancer",
         ),
-        # Sequence 4 — the dancer heard how; mentions the inspector's access list
+        # Sequence 4 — the dancer heard how; names an Italian workman, points to the artist
         QuestClue(
             npc_id="cabaret_dancer",
-            secret="She overheard how the thief got in — a copied key and an unchecked side door",
-            hint="Two men backstage spoke of a copied key and a door nobody watches. The inspector at the Sûreté has the full list of who held keys that night.",
+            secret="She overheard how the thief got in — a copied key and an unchecked side door, arranged by an Italian workman who adored the painting",
+            hint="Two men backstage spoke of a copied key and a door nobody watches. One name came up — Vincenzo, an Italian. There is a painter in Montmartre who knew him well.",
             sequence=4,
-            leads_to="inspector",
-        ),
-        # Sequence 5 — the inspector knows who had access; points to an Italian workman's friend
-        QuestClue(
-            npc_id="inspector",
-            secret="He has a list of everyone with official Louvre access that night",
-            hint="The night guard, the cleaners, and a certain Italian workman all had keys. There is a painter in Montmartre who was close to that workman.",
-            sequence=5,
             leads_to="artist",
         ),
-        # Sequence 6 — final clue: the artist reveals the motive, completing the chain
+        # Sequence 5 — final clue: the artist reveals the motive, completing the chain
         QuestClue(
             npc_id="artist",
-            secret="His friend took the painting out of obsession, not greed",
+            secret="His friend Vincenzo Peruggia had an official key from his time as a Louvre workman; he took the painting out of obsessive love, believing it belonged in Italy",
             hint="They could not bear to leave her in that cold museum — it was love, not theft. His name is Vincenzo. He believed she belonged in Italy.",
-            sequence=6,
+            sequence=5,
             leads_to=None,
         ),
     ],
