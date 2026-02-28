@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from agents.npcs import NPC_COLORS, NPCS, PERSONS
 from routes.dialogue import router as dialogue_router
 
 load_dotenv()
@@ -47,4 +48,22 @@ app.include_router(dialogue_router)
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "npcs": ["baker", "guard", "tavern_keeper"]}
+    return {"status": "ok", "npcs": list(NPCS.keys())}
+
+
+@app.get("/npcs")
+async def list_npcs() -> dict:
+    """Agent NPCs and Person NPCs with categories and colors for frontend zones."""
+    agents = [
+        {"id": n.id, "name": n.name, "category": n.category}
+        for n in NPCS.values()
+    ]
+    persons = [
+        {"id": p.id, "name": p.name, "greeting": p.greeting}
+        for p in PERSONS.values()
+    ]
+    return {
+        "agents": agents,
+        "persons": persons,
+        "colors": NPC_COLORS,
+    }
