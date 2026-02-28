@@ -32,8 +32,10 @@ NPC_COLORS: dict[str, int] = {
 class QuestClue:
     """One clue fragment assigned to a specific NPC."""
     npc_id: str
-    secret: str   # What the NPC knows (internal — not shown to player directly)
-    hint: str     # The surface hint the NPC can drop in dialogue
+    secret: str        # What the NPC knows (internal — never sent to frontend)
+    hint: str          # What the NPC says — must implicitly point toward the next clue
+    sequence: int      # Investigation order: 1 = first clue the player should find
+    leads_to: str | None = None  # npc_id of the character this hint points toward (None = final clue)
 
 
 @dataclass
@@ -62,35 +64,53 @@ QUEST_0 = Quest(
         "find out who took her, why, and how."
     ),
     clues=[
+        # Sequence 1 — entry point: something strange happened at dawn
         QuestClue(
             npc_id="baker",
             secret="She hid a stolen sketch inside a bread loaf for someone fleeing the Louvre",
-            hint="A nervous man came at dawn with a package; gendarmes arrived shortly after.",
+            hint="A nervous man came at dawn with a package; he fled when the gendarmes arrived. The captain himself came asking questions.",
+            sequence=1,
+            leads_to="guard",
         ),
+        # Sequence 2 — the guard was involved; he mentions a tavern meeting
         QuestClue(
             npc_id="guard",
             secret="He was paid to look the other way the night the painting disappeared",
-            hint="Certain persons had keys that night; orders came from above.",
+            hint="Certain persons had keys that night — orders came from above. A man at the tavern by the Palais-Royal knows who arranged it.",
+            sequence=2,
+            leads_to="tavern_keeper",
         ),
+        # Sequence 3 — the tavern keeper sold the schedule; mentions backstage gossip
         QuestClue(
             npc_id="tavern_keeper",
             secret="He sold the night guard's schedule to the thief for a handful of francs",
-            hint="Someone paid well for information about who patrols when.",
+            hint="Someone paid well for information about who patrols when. I heard the dancer at the Moulin Rouge knows how they got inside.",
+            sequence=3,
+            leads_to="cabaret_dancer",
         ),
+        # Sequence 4 — the dancer heard how; mentions the inspector's access list
         QuestClue(
             npc_id="cabaret_dancer",
             secret="She overheard how the thief got in — a copied key and an unchecked side door",
-            hint="Two men backstage spoke of 'the Italian's way in' and a door nobody watches.",
+            hint="Two men backstage spoke of a copied key and a door nobody watches. The inspector at the Sûreté has the full list of who held keys that night.",
+            sequence=4,
+            leads_to="inspector",
         ),
+        # Sequence 5 — the inspector knows who had access; points to an Italian workman's friend
         QuestClue(
             npc_id="inspector",
             secret="He has a list of everyone with official Louvre access that night",
-            hint="The night guard, the cleaners, and a certain Italian workman all had keys.",
+            hint="The night guard, the cleaners, and a certain Italian workman all had keys. There is a painter in Montmartre who was close to that workman.",
+            sequence=5,
+            leads_to="artist",
         ),
+        # Sequence 6 — final clue: the artist reveals the motive, completing the chain
         QuestClue(
             npc_id="artist",
             secret="His friend took the painting out of obsession, not greed",
-            hint="They could not bear to leave her in that cold museum — it was love, not theft.",
+            hint="They could not bear to leave her in that cold museum — it was love, not theft. His name is Vincenzo. He believed she belonged in Italy.",
+            sequence=6,
+            leads_to=None,
         ),
     ],
     solution={

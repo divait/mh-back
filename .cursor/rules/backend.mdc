@@ -1,5 +1,5 @@
 ---
-description: Backend rules — FastAPI, Python, Mistral SDK, W&B. Apply when editing files under backend/ or fine-tuning/
+description: Backend rules — FastAPI, Python, Mistral SDK, W&B. Apply when editing files under backend/
 alwaysApply: false
 ---
 # Backend Rules

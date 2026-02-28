@@ -84,5 +84,8 @@ async def get_quest() -> dict:
         "solution": QUEST_0.solution,
         "red_herrings": QUEST_0.red_herrings,
         # Expose only hints to the frontend, never secrets
-        "clues": [{"npc_id": c.npc_id, "hint": c.hint} for c in QUEST_0.clues],
+        "clues": sorted(
+            [{"npc_id": c.npc_id, "hint": c.hint, "sequence": c.sequence, "leads_to": c.leads_to} for c in QUEST_0.clues],
+            key=lambda c: c["sequence"],
+        ),
     }
