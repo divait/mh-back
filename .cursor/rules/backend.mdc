@@ -1,0 +1,51 @@
+---
+description: Backend rules — FastAPI, Python, Mistral SDK, W&B. Apply when editing files under backend/ or fine-tuning/
+alwaysApply: false
+---
+# Backend Rules
+
+## Runtime & Dependencies
+- Python **3.13+** required
+- Package manager: **uv** — `pyproject.toml` is the source of truth, never create a `requirements.txt`
+- To add a package: `uv add <package>` (updates pyproject.toml automatically)
+- To run: `uv run uvicorn main:app --reload` from `backend/`
+- Dev dependencies live in `[dependency-groups] dev = [...]` in pyproject.toml
+
+## FastAPI Conventions
+- All route handlers are `async`
+- All request/response bodies use **Pydantic models** — no raw `dict` returns from endpoints
+- Routers live in `backend/routes/` and are included in `main.py` via `app.include_router()`
+- Lifespan events (startup/shutdown) use the `@asynccontextmanager` lifespan pattern — not deprecated `@app.on_event`
+- CORS is already configured in `main.py` for `http://localhost:5173` — do not add duplicate middleware
+
+## Mistral SDK
+- Client: `from mistralai import Mistral` — this is the v1+ SDK
+- Always use `client.chat.complete(...)` — not the old `client.chat()` method
+- Default model constant: `"mistral-small-latest"` (defined in `_resolve_model()` in `routes/dialogue.py`)
+- `labs-mistral-small-creative` is commented out — leave it commented unless asked
+- `completion.choices[0].message.content` can be `None` — always guard with `or "*(silence)*"`
+- Keep `max_tokens=200` for NPC dialogue to control latency and cost
+
+## NPC & Agent System (`backend/agents/npcs.py`)
+- `NPC` dataclass: agent NPCs that call Mistral — has `system_prompt`, `secret`, `knowledge`
+- `Person` dataclass: background NPCs — has `greeting` only, **no Mistral calls ever**
+- `QuestClue.secret` is internal only — **never send `secret` to the frontend**, only `hint`
+- `QUEST_0` is the hardcoded fallback quest — always keep it valid and importable
+- `NPC_COLORS` drives frontend zone border colours — keep in sync if adding categories
+- System prompts: English with French Belle Époque flavour, anachronism boundary ~1910
+
+## W&B Integration
+- W&B run is initialised in `main.py` lifespan — do not call `wandb.init()` inside route handlers
+- All `wandb.log()` calls must be wrapped in `try/except Exception: pass` — W&B must never crash the game
+- Check `if wandb.run is None: return` before logging in helper functions
+
+## Conversation History
+- In-memory dict `_history` in `routes/dialogue.py` keyed by `"{session_id}:{npc_id}"`
+- System prompt is prepended fresh each call — do NOT store it in `_history`
+- History is unbounded for now (hackathon scope) — do not add trimming unless asked
+
+## Environment Variables
+- Loaded via `python-dotenv` from `backend/.env`
+- Required: `MISTRAL_API_KEY`
+- Optional: `FINETUNED_MODEL_ID`, `WANDB_API_KEY`, `WANDB_PROJECT`, `ELEVENLABS_API_KEY`
+- Never hardcode keys — always use `os.environ["KEY"]` (required) or `os.getenv("KEY", default)` (optional)
