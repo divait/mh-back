@@ -1,0 +1,15 @@
+[project]
+name = "les-mysteres-de-paris-backend"
+version = "0.1.0"
+description = "FastAPI backend for Les Mystères de Paris AI-Chronicles"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.6",
+    "mistralai>=1.2.0",
+    "wandb>=0.18.1",
+    "python-dotenv>=1.0.1",
+    "pydantic>=2.9.2",
+    "httpx>=0.27.2",
+]
+
