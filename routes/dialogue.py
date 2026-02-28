@@ -6,9 +6,40 @@ from mistralai import Mistral
 from pydantic import BaseModel
 
 import state as app_state
-from agents.npcs import NPCS
+from agents.npcs import NPCS, QUEST_0
 
 router = APIRouter(prefix="/dialogue", tags=["dialogue"])
+
+
+# ---------------------------------------------------------------------------
+# NPC location hints used in intro generation and fallback lines
+# ---------------------------------------------------------------------------
+_NPC_LOCATION_HINTS: dict[str, str] = {
+    "baker": "La Boulangerie near the Louvre — the baker, Marie Dupont, was open before dawn",
+    "guard": "the Poste de Garde — Capitaine Renard knows who had access that night",
+    "tavern_keeper": "the Taverne du Palais-Royal — Jacques Moreau hears everything",
+    "cabaret_dancer": "Le Moulin Rouge — Colette Marchand overheard things backstage",
+    "artist": "the Montmartre Atelier — Henri Toulouse knew the people involved",
+}
+
+_INTRO_SYSTEM_PROMPT = """\
+You are Inspecteur Gaston Lefèvre of the Sûreté — thin, precise, cold, an early \
+believer in fingerprints and scientific detection. You speak English with formal \
+French bureaucratic precision. You are briefing your field investigator at the start \
+of a case. You never reveal the solution or name the guilty party — only the facts \
+of the crime and where to start looking.
+
+Write exactly 6 lines of dialogue, each on its own line, with no numbering, \
+no bullet points, and no extra commentary. The lines must:
+1. Greet the investigator and introduce yourself briefly.
+2. Describe the crime that has just occurred (use the title and description provided).
+3. State the urgency — limited days, careers on the line.
+4. Assign the investigator their role (your eyes and ears in the streets).
+5. Name the first lead: where to go and who to speak to first.
+6. Close with a terse instruction to report back with evidence before making an arrest.
+
+Stay in character throughout. Belle Époque Paris, ~1900. No anachronisms.\
+"""
 
 # Conversation history per session (in-memory for hackathon; swap for Redis in prod)
 _history: dict[str, list[dict]] = {}
@@ -40,6 +71,78 @@ def _resolve_model(variant: str) -> str:
             return model_id
         # Graceful fallback so the demo never breaks
     return "mistral-small-latest"  # "labs-mistral-small-creative"
+
+
+@router.get("/intro/{session_id}")
+async def get_intro(session_id: str) -> dict:
+    """
+    Generate the inspector's opening briefing using Mistral, tailored to the
+    active quest for this session. Falls back to hardcoded lines if generation
+    fails so the game never breaks.
+    """
+    quest = app_state.active_quests.get(session_id, QUEST_0)
+
+    first_clue = next(
+        (c for c in sorted(quest.clues, key=lambda c: c.sequence)), None
+    )
+    # The first lead is the NPC the first clue points to, or the clue holder itself
+    first_npc_id = (
+        first_clue.leads_to
+        if first_clue and first_clue.leads_to
+        else (first_clue.npc_id if first_clue else "baker")
+    )
+    first_lead = _NPC_LOCATION_HINTS.get(
+        first_npc_id,
+        "the streets of Paris — someone out there knows the truth",
+    )
+
+    def _fallback_lines() -> list[str]:
+        return [
+            "Ah — you have arrived at last. I am Inspecteur Gaston Lefèvre of the Sûreté.",
+            f"The situation is grave. {quest.description}",
+            "I have limited time to hand the Préfet a name, a motive, and a method. "
+            "Or we are both finished.",
+            "I cannot be seen asking questions in the streets — that is your task. "
+            "You are my eyes and ears, Monsieur l'enquêteur.",
+            f"Begin at {first_lead}. Press them — carefully.",
+            "Report back to me here when you have evidence enough for an arrest. "
+            "Bonne chance.",
+        ]
+
+    try:
+        client = _get_client()
+        user_prompt = (
+            f"Case title: {quest.title}\n"
+            f"Case description: {quest.description}\n"
+            f"First lead: {first_lead}\n\n"
+            "Write the 6-line briefing now."
+        )
+        completion = client.chat.complete(
+            model="mistral-small-latest",
+            messages=[
+                {"role": "system", "content": _INTRO_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=400,
+            temperature=0.75,
+        )
+        raw = (completion.choices[0].message.content or "").strip()
+        # Split on newlines, drop empty lines, take up to 6
+        lines = [ln.strip() for ln in raw.splitlines() if ln.strip()][:6]
+        # Ensure we always have at least 3 lines; fall back if generation is too short
+        if len(lines) < 3:
+            lines = _fallback_lines()
+    except Exception:
+        lines = _fallback_lines()
+
+    return {
+        "speaker": "Inspecteur Gaston Lefèvre",
+        "portrait": "🔍",
+        "lines": lines,
+        "quest_title": quest.title,
+        "quest_description": quest.description,
+        "first_lead_npc": first_npc_id,
+    }
 
 
 @router.post("/", response_model=DialogueResponse)
