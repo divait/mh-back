@@ -37,7 +37,7 @@ def _resolve_model(variant: str) -> str:
         if model_id:
             return model_id
         # Graceful fallback so the demo never breaks
-    return "mistral-small-latest"
+    return "mistral-small-latest"  # "labs-mistral-small-creative"
 
 
 @router.post("/", response_model=DialogueResponse)
@@ -108,14 +108,16 @@ def _log_to_wandb(
     try:
         if wandb.run is None:
             return
-        wandb.log({
-            "session_id": session_id,
-            "npc_id": npc_id,
-            "model_variant": model_variant,
-            "model_used": model_used,
-            "player_message": player_message,
-            "npc_reply": npc_reply,
-            "reply_length": len(npc_reply),
-        })
+        wandb.log(
+            {
+                "session_id": session_id,
+                "npc_id": npc_id,
+                "model_variant": model_variant,
+                "model_used": model_used,
+                "player_message": player_message,
+                "npc_reply": npc_reply,
+                "reply_length": len(npc_reply),
+            }
+        )
     except Exception:
         pass  # Never let W&B crash the game

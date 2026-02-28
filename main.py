@@ -19,7 +19,7 @@ async def lifespan(app: FastAPI):
         name="live-dialogue-session",
         tags=["dialogue", "live"],
         config={
-            "baseline_model": "mistral-small-latest",
+            "baseline_model": "mistral-small-latest",  # "labs-mistral-small-creative",
             "finetuned_model": os.getenv("FINETUNED_MODEL_ID", "pending"),
         },
         reinit=True,
