@@ -7,7 +7,7 @@ a fragment of the truth (who had access, why they did it, how they got in).
 Generic Person NPCs are non-agentic; they use canned greetings only (no Mistral).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 MYSTERY_CONTEXT = """
@@ -26,6 +26,83 @@ NPC_COLORS: dict[str, int] = {
     "belle_epoque": 0xD4AF37,
     "person": 0x888888,
 }
+
+
+@dataclass
+class QuestClue:
+    """One clue fragment assigned to a specific NPC."""
+    npc_id: str
+    secret: str   # What the NPC knows (internal — not shown to player directly)
+    hint: str     # The surface hint the NPC can drop in dialogue
+
+
+@dataclass
+class Quest:
+    """
+    Structured quest object.  Phase 1 ships QUEST_0 (hardcoded).
+    Phase 2 Game Master generates quests in this same schema; QUEST_0 is the fallback.
+    """
+    quest_id: str
+    title: str
+    description: str
+    clues: list[QuestClue] = field(default_factory=list)
+    solution: dict = field(default_factory=dict)  # {suspect, motive, method}
+    red_herrings: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Quest 0 — hardcoded Mona Lisa theft (MVP fallback, always available)
+# ---------------------------------------------------------------------------
+QUEST_0 = Quest(
+    quest_id="quest_0",
+    title="La Joconde a disparu !",
+    description=(
+        "The Mona Lisa has vanished from the Louvre overnight. "
+        "Paris is in shock. Six witnesses hold the truth — "
+        "find out who took her, why, and how."
+    ),
+    clues=[
+        QuestClue(
+            npc_id="baker",
+            secret="She hid a stolen sketch inside a bread loaf for someone fleeing the Louvre",
+            hint="A nervous man came at dawn with a package; gendarmes arrived shortly after.",
+        ),
+        QuestClue(
+            npc_id="guard",
+            secret="He was paid to look the other way the night the painting disappeared",
+            hint="Certain persons had keys that night; orders came from above.",
+        ),
+        QuestClue(
+            npc_id="tavern_keeper",
+            secret="He sold the night guard's schedule to the thief for a handful of francs",
+            hint="Someone paid well for information about who patrols when.",
+        ),
+        QuestClue(
+            npc_id="cabaret_dancer",
+            secret="She overheard how the thief got in — a copied key and an unchecked side door",
+            hint="Two men backstage spoke of 'the Italian's way in' and a door nobody watches.",
+        ),
+        QuestClue(
+            npc_id="inspector",
+            secret="He has a list of everyone with official Louvre access that night",
+            hint="The night guard, the cleaners, and a certain Italian workman all had keys.",
+        ),
+        QuestClue(
+            npc_id="artist",
+            secret="His friend took the painting out of obsession, not greed",
+            hint="They could not bear to leave her in that cold museum — it was love, not theft.",
+        ),
+    ],
+    solution={
+        "suspect": "Vincenzo Peruggia (the Italian workman)",
+        "motive": "Obsessive love of art; believed the Mona Lisa belonged in Italy",
+        "method": "Copied key + unguarded side door; hidden overnight in the museum",
+    },
+    red_herrings=[
+        "The Dreyfus sympathisers were rumoured to be involved",
+        "A rival art dealer was seen near the Louvre that week",
+    ],
+)
 
 
 @dataclass
