@@ -4,9 +4,9 @@ from typing import AsyncGenerator
 
 import httpx
 import wandb
+import boto3
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
-from mistralai import Mistral
 from pydantic import BaseModel
 
 import state as app_state
@@ -159,8 +159,9 @@ class DialogueResponse(BaseModel):
     model_used: str
 
 
-def _get_client() -> Mistral:
-    return Mistral(api_key=os.environ["MISTRAL_API_KEY"])
+def _get_client():
+    region = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+    return boto3.client("bedrock-runtime", region_name=region)
 
 
 def _resolve_model(variant: str) -> str:
@@ -169,7 +170,7 @@ def _resolve_model(variant: str) -> str:
         if model_id:
             return model_id
         # Graceful fallback so the demo never breaks
-    return "mistral-small-latest"  # "labs-mistral-small-creative"
+    return "mistral.ministral-3-8b-instruct"
 
 
 @router.get("/intro/{session_id}")
@@ -216,16 +217,15 @@ async def get_intro(session_id: str) -> dict:
             f"First lead: {first_lead}\n\n"
             "Write the 6-line briefing now."
         )
-        completion = client.chat.complete(
-            model="mistral-small-latest",
+        completion = client.converse(
+            modelId="mistral.ministral-3-8b-instruct",
             messages=[
-                {"role": "system", "content": _INTRO_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
+                {"role": "user", "content": [{"text": user_prompt}]}
             ],
-            max_tokens=400,
-            temperature=0.75,
+            system=[{"text": _INTRO_SYSTEM_PROMPT}],
+            inferenceConfig={"maxTokens": 400, "temperature": 0.75},
         )
-        raw = (completion.choices[0].message.content or "").strip()
+        raw = completion["output"]["message"]["content"][0]["text"].strip()
         # Split on newlines, drop empty lines, take up to 6
         lines = [ln.strip() for ln in raw.splitlines() if ln.strip()][:6]
         # Ensure we always have at least 3 lines; fall back if generation is too short
@@ -271,20 +271,37 @@ async def chat_with_npc(req: DialogueRequest) -> DialogueResponse:
                 )
                 break
 
-    messages = [{"role": "system", "content": system_content}]
-    messages.extend(_history[history_key])
-    messages.append({"role": "user", "content": req.player_message})
+    bedrock_messages = []
+    for msg in _history[history_key]:
+        bedrock_messages.append({
+            "role": "assistant" if msg["role"] == "assistant" else "user",
+            "content": [{"text": msg["content"]}]
+        })
+    bedrock_messages.append({"role": "user", "content": [{"text": req.player_message}]})
 
     t0 = time.monotonic()
-    completion = client.chat.complete(
-        model=model,
-        messages=messages,
-        max_tokens=200,
-        temperature=0.85,
-    )
+    try:
+        response = client.converse(
+            modelId=model,
+            messages=bedrock_messages,
+            system=[{"text": system_content}],
+            inferenceConfig={"maxTokens": 200, "temperature": 0.85},
+        )
+        npc_reply = response["output"]["message"]["content"][0]["text"]
+    except Exception as e:
+        err_str = str(e)
+        print(f"[Dialogue] Bedrock error for model={model}: {err_str}")
+        if "Operation not allowed" in err_str or "not authorized" in err_str.lower() or "AccessDeniedException" in err_str:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Bedrock model '{model}' is not accessible. "
+                    "Please enable model access in the AWS Bedrock console "
+                    "(Bedrock → Model access → Enable Mistral models)."
+                ),
+            )
+        raise HTTPException(status_code=500, detail=f"Bedrock API error: {err_str}")
     latency_ms = int((time.monotonic() - t0) * 1000)
-
-    npc_reply = completion.choices[0].message.content or "*(silence)*"
 
     # Persist turn in history (without the system prompt)
     _history[history_key].append({"role": "user", "content": req.player_message})
@@ -354,19 +371,18 @@ async def summarize_clue(req: SummarizeRequest) -> SummarizeResponse:
 
     try:
         client = _get_client()
-        completion = client.chat.complete(
-            model="mistral-small-latest",
+        completion = client.converse(
+            modelId="mistral.ministral-3-8b-instruct",
             messages=[
-                {"role": "system", "content": _SUMMARIZE_SYSTEM},
                 {
                     "role": "user",
-                    "content": f"Witness: {req.npc_name}\n\nConversation:\n{transcript}\n\nWrite the field note now.",
-                },
+                    "content": [{"text": f"Witness: {req.npc_name}\n\nConversation:\n{transcript}\n\nWrite the field note now."}],
+                }
             ],
-            max_tokens=120,
-            temperature=0.3,
+            system=[{"text": _SUMMARIZE_SYSTEM}],
+            inferenceConfig={"maxTokens": 120, "temperature": 0.3},
         )
-        raw = (completion.choices[0].message.content or "").strip()
+        raw = completion["output"]["message"]["content"][0]["text"].strip()
         if raw == "NO_CLUE" or not raw:
             return SummarizeResponse(summary="")
         return SummarizeResponse(summary=raw)

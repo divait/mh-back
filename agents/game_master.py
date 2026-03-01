@@ -15,8 +15,7 @@ import os
 import random
 import time
 import wandb
-
-from mistralai import Mistral
+import boto3
 
 from agents.npcs import NPCS, QUEST_0, Quest, QuestClue
 
@@ -26,9 +25,9 @@ MAX_RETRIES = 2
 # Model constants
 # ---------------------------------------------------------------------------
 
-MODEL_QUEST_0   = "quest_0"                     # no API call — instant static quest
-MODEL_DEFAULT   = "mistral-medium-latest"        # best quality
-MODEL_CREATIVE  = "labs-mistral-small-creative"  # experimental, fast
+MODEL_QUEST_0   = "quest_0"                          # no API call — instant static quest
+MODEL_DEFAULT   = "mistral.mistral-large-3-675b-instruct"  # best quality
+MODEL_CREATIVE  = "mistral.ministral-3-8b-instruct"        # fast, lightweight
 MODEL_FINETUNED = os.getenv("FINETUNED_MODEL_ID", "").strip()  # set after fine-tuning
 
 # NPCs available as clue-holders in the current Phaser scene.
@@ -222,7 +221,8 @@ def generate_quest(model: str | None = None) -> Quest:
             fallback_used = True
         else:
             print(f"[GameMaster] Generating quest with model={resolved}")
-            client = Mistral(api_key=api_key)
+            region = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+            client = boto3.client("bedrock-runtime", region_name=region)
             premise = random.choice(_PREMISES)
 
             anchor_npcs = [
@@ -235,17 +235,15 @@ def generate_quest(model: str | None = None) -> Quest:
             for attempt in range(1, MAX_RETRIES + 1):
                 try:
                     retry_count = attempt - 1
-                    completion = client.chat.complete(
-                        model=resolved,
+                    response = client.converse(
+                        modelId=resolved,
                         messages=[
-                            {"role": "system", "content": SYSTEM_PROMPT},
-                            {"role": "user",   "content": user_prompt},
+                            {"role": "user", "content": [{"text": user_prompt}]}
                         ],
-                        response_format={"type": "json_object"},
-                        temperature=0.85,
-                        max_tokens=1500,
+                        system=[{"text": SYSTEM_PROMPT}],
+                        inferenceConfig={"temperature": 0.85, "maxTokens": 1500},
                     )
-                    raw = completion.choices[0].message.content or ""
+                    raw = response["output"]["message"]["content"][0]["text"]
                     data = json.loads(raw)
                     generated_quest = _parse_quest(data)
                     print(f"[GameMaster] Quest generated: {generated_quest.quest_id} — {generated_quest.title}")

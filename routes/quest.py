@@ -11,7 +11,7 @@ from fastapi import APIRouter
 import json
 import os
 from pydantic import BaseModel
-from mistralai import Mistral
+import boto3
 
 import state as app_state
 from agents.game_master import (
@@ -60,7 +60,6 @@ def _public_view(quest: Quest) -> dict:
             [
                 {
                     "npc_id": c.npc_id,
-                    "secret": c.secret,
                     "hint": c.hint,
                     "sequence": c.sequence,
                     "leads_to": c.leads_to,
@@ -76,7 +75,7 @@ def _norm(s: str) -> str:
     return s.strip().lower()
 
 
-def _llm_validate_solution(mistral_client: Mistral, submitted: SolveRequest, true_sol: dict) -> dict:
+def _llm_validate_solution(client, submitted: SolveRequest, true_sol: dict) -> dict:
     """Use Mistral to flexibly score the player's submission against the true solution."""
     prompt = f"""\
 You are an expert detective evaluator for a mystery game.
@@ -106,13 +105,12 @@ Return strictly valid JSON with 3 boolean fields:
 }}
 """
     try:
-        response = mistral_client.chat.complete(
-            model=MODEL_DEFAULT,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.0
+        response = client.converse(
+            modelId=MODEL_DEFAULT,
+            messages=[{"role": "user", "content": [{"text": prompt}]}],
+            inferenceConfig={"temperature": 0.0},
         )
-        content = response.choices[0].message.content
+        content = response["output"]["message"]["content"][0]["text"]
         return json.loads(content)
     except Exception as e:
         print(f"LLM Validation Error: {e}")
@@ -214,9 +212,9 @@ async def solve(req: SolveRequest) -> dict:
     motive_match  = _norm(req.motive)  in _norm(sol.get("motive",  ""))
     method_match  = _norm(req.method)  in _norm(sol.get("method",  ""))
 
-    api_key = os.getenv("MISTRAL_API_KEY", "").strip()
-    if api_key:
-        client = Mistral(api_key=api_key)
+    if os.getenv("AWS_ACCESS_KEY_ID"):
+        region = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+        client = boto3.client("bedrock-runtime", region_name=region)
         llm_res = _llm_validate_solution(client, req, sol)
         if llm_res:
             suspect_match = llm_res.get("suspect_match", suspect_match)

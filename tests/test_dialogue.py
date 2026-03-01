@@ -14,15 +14,9 @@ from fastapi.testclient import TestClient
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_mistral_response(text: str) -> MagicMock:
-    """Build a minimal mock that looks like a Mistral chat completion."""
-    msg = MagicMock()
-    msg.content = text
-    choice = MagicMock()
-    choice.message = msg
-    completion = MagicMock()
-    completion.choices = [choice]
-    return completion
+def _make_mistral_response(text: str) -> dict:
+    """Build a minimal mock that looks like a Bedrock Converse response."""
+    return {"output": {"message": {"content": [{"text": text}]}}}
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +129,7 @@ class TestDialogueHappyPath:
 
         with patch("routes.dialogue._get_client") as mock_client_factory:
             mock_client = MagicMock()
-            mock_client.chat.complete.return_value = mock_completion
+            mock_client.converse.return_value = mock_completion
             mock_client_factory.return_value = mock_client
 
             resp = client.post(
@@ -159,7 +153,7 @@ class TestDialogueHappyPath:
 
         with patch("routes.dialogue._get_client") as mock_client_factory:
             mock_client = MagicMock()
-            mock_client.chat.complete.return_value = mock_completion
+            mock_client.converse.return_value = mock_completion
             mock_client_factory.return_value = mock_client
 
             resp = client.post(
@@ -184,13 +178,13 @@ class TestDialogueHistory:
         """Second message to the same NPC should include prior turn in context."""
         calls = []
 
-        def fake_complete(model, messages, **kwargs):
+        def fake_complete(modelId, messages, **kwargs):
             calls.append(messages)
             return _make_mistral_response("Oui, bien sûr.")
 
         with patch("routes.dialogue._get_client") as mock_factory:
             mock_client = MagicMock()
-            mock_client.chat.complete.side_effect = fake_complete
+            mock_client.converse.side_effect = fake_complete
             mock_factory.return_value = mock_client
 
             client.post(
@@ -204,22 +198,20 @@ class TestDialogueHistory:
 
         # Second call's messages should contain the first user turn
         second_call_messages = calls[1]
-        user_contents = [m["content"] for m in second_call_messages if m["role"] == "user"]
+        user_contents = [m["content"][0]["text"] for m in second_call_messages if m["role"] == "user"]
         assert "Bonjour!" in user_contents, "Prior player message should be in history"
 
     def test_history_isolated_per_npc(self, client):
         """History for baker should not bleed into guard's conversation."""
         calls: dict[str, list] = {}
 
-        def fake_complete(model, messages, **kwargs):
-            npc_id = next(
-                (m["content"] for m in messages if m["role"] == "system"), ""
-            )
+        def fake_complete(modelId, messages, system=None, **kwargs):
+            npc_id = system[0]["text"] if system else ""
             return _make_mistral_response("Réponse.")
 
         with patch("routes.dialogue._get_client") as mock_factory:
             mock_client = MagicMock()
-            mock_client.chat.complete.side_effect = fake_complete
+            mock_client.converse.side_effect = fake_complete
             mock_factory.return_value = mock_client
 
             client.post(
@@ -242,7 +234,7 @@ class TestClearHistory:
     def test_clear_history_returns_cleared_keys(self, client):
         with patch("routes.dialogue._get_client") as mock_factory:
             mock_client = MagicMock()
-            mock_client.chat.complete.return_value = _make_mistral_response("Ok.")
+            mock_client.converse.return_value = _make_mistral_response("Ok.")
             mock_factory.return_value = mock_client
 
             client.post(

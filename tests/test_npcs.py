@@ -152,10 +152,11 @@ class TestQuest0:
         assert "motive" in QUEST_0.solution
         assert "method" in QUEST_0.solution
 
-    def test_clues_cover_all_six_agents(self):
+    def test_clues_cover_all_anchor_agents(self):
         clue_npc_ids = {c.npc_id for c in QUEST_0.clues}
-        assert clue_npc_ids == EXPECTED_AGENT_IDS, (
-            f"QUEST_0 clues should cover all 6 agents. Missing: {EXPECTED_AGENT_IDS - clue_npc_ids}"
+        expected = EXPECTED_AGENT_IDS - {"inspector"}
+        assert clue_npc_ids == expected, (
+            f"QUEST_0 clues should cover all anchor agents. Missing: {expected - clue_npc_ids}"
         )
 
     def test_each_clue_is_quest_clue_instance(self):

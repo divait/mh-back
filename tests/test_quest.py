@@ -33,14 +33,8 @@ from agents.npcs import QUEST_0, QuestClue
 # ---------------------------------------------------------------------------
 
 
-def _make_mistral_response(text: str) -> MagicMock:
-    msg = MagicMock()
-    msg.content = text
-    choice = MagicMock()
-    choice.message = msg
-    completion = MagicMock()
-    completion.choices = [choice]
-    return completion
+def _make_mistral_response(text: str) -> dict:
+    return {"output": {"message": {"content": [{"text": text}]}}}
 
 
 def _valid_quest_dict(num_clues: int = 4) -> dict:
@@ -203,7 +197,7 @@ class TestGenerateQuestModels:
         """quest_0 mode must return QUEST_0 without any API call."""
         from agents.game_master import generate_quest
 
-        with patch("agents.game_master.Mistral") as MockMistral:
+        with patch("agents.game_master.boto3.client") as MockMistral:
             quest = generate_quest(model=MODEL_QUEST_0)
             MockMistral.assert_not_called()
 
@@ -215,13 +209,13 @@ class TestGenerateQuestModels:
 
         good_response = _make_mistral_response(json.dumps(_valid_quest_dict(4)))
         with patch.dict("os.environ", {"MISTRAL_API_KEY": "fake-key"}):
-            with patch("agents.game_master.Mistral") as MockMistral:
+            with patch("agents.game_master.boto3.client") as MockMistral:
                 mock_client = MagicMock()
-                mock_client.chat.complete.return_value = good_response
+                mock_client.converse.return_value = good_response
                 MockMistral.return_value = mock_client
                 generate_quest(model=None)
-                call_kwargs = mock_client.chat.complete.call_args
-                assert call_kwargs.kwargs["model"] == MODEL_DEFAULT
+                call_kwargs = mock_client.converse.call_args
+                assert call_kwargs.kwargs["modelId"] == MODEL_DEFAULT
 
     def test_creative_model_is_passed_to_api(self):
         """MODEL_CREATIVE should be forwarded to the Mistral client."""
@@ -229,28 +223,28 @@ class TestGenerateQuestModels:
 
         good_response = _make_mistral_response(json.dumps(_valid_quest_dict(4)))
         with patch.dict("os.environ", {"MISTRAL_API_KEY": "fake-key"}):
-            with patch("agents.game_master.Mistral") as MockMistral:
+            with patch("agents.game_master.boto3.client") as MockMistral:
                 mock_client = MagicMock()
-                mock_client.chat.complete.return_value = good_response
+                mock_client.converse.return_value = good_response
                 MockMistral.return_value = mock_client
                 generate_quest(model=MODEL_CREATIVE)
-                call_kwargs = mock_client.chat.complete.call_args
-                assert call_kwargs.kwargs["model"] == MODEL_CREATIVE
+                call_kwargs = mock_client.converse.call_args
+                assert call_kwargs.kwargs["modelId"] == MODEL_CREATIVE
 
     def test_custom_model_id_is_forwarded(self):
-        """Any arbitrary model string should be forwarded as-is (e.g. fine-tuned ID)."""
+        """Any arbitrary modelId string should be forwarded as-is (e.g. fine-tuned ID)."""
         from agents.game_master import generate_quest
 
-        custom_model = "ft:open-mistral-7b:abc123:paris-quest"
+        custom_modelId = "ft:open-mistral-7b:abc123:paris-quest"
         good_response = _make_mistral_response(json.dumps(_valid_quest_dict(4)))
         with patch.dict("os.environ", {"MISTRAL_API_KEY": "fake-key"}):
-            with patch("agents.game_master.Mistral") as MockMistral:
+            with patch("agents.game_master.boto3.client") as MockMistral:
                 mock_client = MagicMock()
-                mock_client.chat.complete.return_value = good_response
+                mock_client.converse.return_value = good_response
                 MockMistral.return_value = mock_client
-                generate_quest(model=custom_model)
-                call_kwargs = mock_client.chat.complete.call_args
-                assert call_kwargs.kwargs["model"] == custom_model
+                generate_quest(model=custom_modelId)
+                call_kwargs = mock_client.converse.call_args
+                assert call_kwargs.kwargs["modelId"] == custom_modelId
 
 
 class TestGenerateQuestFallback:
@@ -265,9 +259,9 @@ class TestGenerateQuestFallback:
         from agents.game_master import generate_quest
 
         with patch.dict("os.environ", {"MISTRAL_API_KEY": "fake-key"}):
-            with patch("agents.game_master.Mistral") as MockMistral:
+            with patch("agents.game_master.boto3.client") as MockMistral:
                 mock_client = MagicMock()
-                mock_client.chat.complete.side_effect = RuntimeError("API down")
+                mock_client.converse.side_effect = RuntimeError("API down")
                 MockMistral.return_value = mock_client
                 quest = generate_quest()
 
@@ -278,9 +272,9 @@ class TestGenerateQuestFallback:
 
         bad_response = _make_mistral_response("not valid json at all {{{")
         with patch.dict("os.environ", {"MISTRAL_API_KEY": "fake-key"}):
-            with patch("agents.game_master.Mistral") as MockMistral:
+            with patch("agents.game_master.boto3.client") as MockMistral:
                 mock_client = MagicMock()
-                mock_client.chat.complete.return_value = bad_response
+                mock_client.converse.return_value = bad_response
                 MockMistral.return_value = mock_client
                 quest = generate_quest()
 
@@ -293,9 +287,9 @@ class TestGenerateQuestFallback:
         bad_quest["clues"][0]["leads_to"] = "artist"  # broken chain
         bad_response = _make_mistral_response(json.dumps(bad_quest))
         with patch.dict("os.environ", {"MISTRAL_API_KEY": "fake-key"}):
-            with patch("agents.game_master.Mistral") as MockMistral:
+            with patch("agents.game_master.boto3.client") as MockMistral:
                 mock_client = MagicMock()
-                mock_client.chat.complete.return_value = bad_response
+                mock_client.converse.return_value = bad_response
                 MockMistral.return_value = mock_client
                 quest = generate_quest()
 
@@ -310,9 +304,9 @@ class TestGenerateQuestFallback:
         bad_quest["clues"][0]["npc_id"] = "inspector"
         bad_response = _make_mistral_response(json.dumps(bad_quest))
         with patch.dict("os.environ", {"MISTRAL_API_KEY": "fake-key"}):
-            with patch("agents.game_master.Mistral") as MockMistral:
+            with patch("agents.game_master.boto3.client") as MockMistral:
                 mock_client = MagicMock()
-                mock_client.chat.complete.return_value = bad_response
+                mock_client.converse.return_value = bad_response
                 MockMistral.return_value = mock_client
                 quest = generate_quest()
 
@@ -324,9 +318,9 @@ class TestGenerateQuestFallback:
         good_quest = _valid_quest_dict(4)
         good_response = _make_mistral_response(json.dumps(good_quest))
         with patch.dict("os.environ", {"MISTRAL_API_KEY": "fake-key"}):
-            with patch("agents.game_master.Mistral") as MockMistral:
+            with patch("agents.game_master.boto3.client") as MockMistral:
                 mock_client = MagicMock()
-                mock_client.chat.complete.return_value = good_response
+                mock_client.converse.return_value = good_response
                 MockMistral.return_value = mock_client
                 quest = generate_quest()
 
@@ -354,12 +348,12 @@ class TestModelsEndpoint:
         ids = [m["id"] for m in data["models"]]
         assert MODEL_QUEST_0 in ids
 
-    def test_contains_default_model(self, client):
+    def test_contains_default_modelId(self, client):
         data = client.get("/quest/models").json()
         ids = [m["id"] for m in data["models"]]
         assert MODEL_DEFAULT in ids
 
-    def test_contains_creative_model(self, client):
+    def test_contains_creative_modelId(self, client):
         data = client.get("/quest/models").json()
         ids = [m["id"] for m in data["models"]]
         assert MODEL_CREATIVE in ids
@@ -368,12 +362,12 @@ class TestModelsEndpoint:
         data = client.get("/quest/models").json()
         assert data["default"] == MODEL_DEFAULT
 
-    def test_each_model_has_required_fields(self, client):
+    def test_each_modelId_has_required_fields(self, client):
         data = client.get("/quest/models").json()
-        for model in data["models"]:
-            assert "id" in model
-            assert "label" in model
-            assert "available" in model
+        for modelId in data["models"]:
+            assert "id" in modelId
+            assert "label" in modelId
+            assert "available" in modelId
 
 
 # ---------------------------------------------------------------------------
@@ -429,9 +423,9 @@ class TestGenerateEndpoint:
         if model is not None:
             payload["model"] = model
         with patch.dict("os.environ", {"MISTRAL_API_KEY": "fake-key"}):
-            with patch("agents.game_master.Mistral") as MockMistral:
+            with patch("agents.game_master.boto3.client") as MockMistral:
                 mock_client = MagicMock()
-                mock_client.chat.complete.return_value = good_response
+                mock_client.converse.return_value = good_response
                 MockMistral.return_value = mock_client
                 resp = client.post("/quest/generate", json=payload)
         return resp
@@ -461,7 +455,7 @@ class TestGenerateEndpoint:
 
     def test_quest_0_mode_returns_instantly(self, client):
         """quest_0 mode must not call Mistral."""
-        with patch("agents.game_master.Mistral") as MockMistral:
+        with patch("agents.game_master.boto3.client") as MockMistral:
             resp = client.post("/quest/generate", json={"session_id": "q0_test", "model": MODEL_QUEST_0})
             MockMistral.assert_not_called()
         assert resp.status_code == 200
@@ -495,9 +489,9 @@ class TestSessionQuest:
         session_id = "session_quest_test_unique"
 
         with patch.dict("os.environ", {"MISTRAL_API_KEY": "fake-key"}):
-            with patch("agents.game_master.Mistral") as MockMistral:
+            with patch("agents.game_master.boto3.client") as MockMistral:
                 mock_client = MagicMock()
-                mock_client.chat.complete.return_value = good_response
+                mock_client.converse.return_value = good_response
                 MockMistral.return_value = mock_client
                 client.post("/quest/generate", json={"session_id": session_id})
 
@@ -608,17 +602,18 @@ class TestClueInjectionInDialogue:
     def _capture_system_prompt(self, client, session_id: str, npc_id: str) -> str:
         captured = []
 
-        def fake_complete(model, messages, **kwargs):
-            captured.extend(messages)
+        def fake_complete(modelId, messages, system=None, **kwargs):
+            if system:
+                captured.extend(system)
             return _make_mistral_response("...")
 
         with patch("routes.dialogue._get_client") as mock_factory:
             mock_client = MagicMock()
-            mock_client.chat.complete.side_effect = fake_complete
+            mock_client.converse.side_effect = fake_complete
             mock_factory.return_value = mock_client
             client.post("/dialogue/", json={"session_id": session_id, "npc_id": npc_id, "player_message": "Tell me."})
 
-        return next(m["content"] for m in captured if m["role"] == "system")
+        return captured[0]["text"] if captured else ""
 
     def test_baker_receives_its_clue_secret(self, client):
         session_id = "inject_baker"
