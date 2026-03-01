@@ -199,6 +199,8 @@ def generate_quest(model: str | None = None) -> Quest:
     Always returns a valid Quest — falls back to QUEST_0 on any failure.
     """
     resolved = model or MODEL_DEFAULT
+    if resolved == "finetuned":
+        resolved = MODEL_FINETUNED
 
     # Static fallback — no API call
     if resolved == MODEL_QUEST_0:

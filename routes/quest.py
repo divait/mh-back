@@ -51,11 +51,13 @@ def _public_view(quest: Quest) -> dict:
         "quest_id": quest.quest_id,
         "title": quest.title,
         "description": quest.description,
+        "solution": quest.solution,
         "red_herrings": quest.red_herrings,
         "clues": sorted(
             [
                 {
                     "npc_id": c.npc_id,
+                    "secret": c.secret,
                     "hint": c.hint,
                     "sequence": c.sequence,
                     "leads_to": c.leads_to,
