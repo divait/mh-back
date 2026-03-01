@@ -8,7 +8,10 @@ Quest endpoints:
 """
 
 from fastapi import APIRouter
+import json
+import os
 from pydantic import BaseModel
+from mistralai import Mistral
 
 import state as app_state
 from agents.game_master import (
@@ -71,6 +74,49 @@ def _public_view(quest: Quest) -> dict:
 
 def _norm(s: str) -> str:
     return s.strip().lower()
+
+
+def _llm_validate_solution(mistral_client: Mistral, submitted: SolveRequest, true_sol: dict) -> dict:
+    """Use Mistral to flexibly score the player's submission against the true solution."""
+    prompt = f"""\
+You are an expert detective evaluator for a mystery game.
+Compare the player's submitted solution against the TRUE solution.
+The player does not need to guess exact wording, they just need to identify the correct core concepts.
+
+TRUE SOLUTION:
+Suspect: {true_sol.get('suspect')}
+Motive: {true_sol.get('motive')}
+Method: {true_sol.get('method')}
+
+PLAYER SUBMISSION:
+Suspect: {submitted.suspect}
+Motive: {submitted.motive}
+Method: {submitted.method}
+
+Evaluate each of the 3 components. Does the player's submission semantically match the true solution?
+- Suspect: Must identify the correct person (by name, role, or clear description).
+- Motive: Must capture the core reason (e.g. debt, blackmail, jealousy).
+- Method: Must capture the core mechanism (e.g. poison, copied key, pushed).
+
+Return strictly valid JSON with 3 boolean fields:
+{{
+    "suspect_match": true/false,
+    "motive_match": true/false,
+    "method_match": true/false
+}}
+"""
+    try:
+        response = mistral_client.chat.complete(
+            model=MODEL_DEFAULT,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            temperature=0.0
+        )
+        content = response.choices[0].message.content
+        return json.loads(content)
+    except Exception as e:
+        print(f"LLM Validation Error: {e}")
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -150,8 +196,8 @@ async def solve(req: SolveRequest) -> dict:
     """
     Validate the player's solution against the active quest.
 
-    Matching is flexible: the player's answer just needs to be *contained in*
-    the correct solution string (case-insensitive).
+    Uses an LLM judge to flexibly determine if the player's submission
+    semantically matches the suspect, motive, and method.
 
     Returns:
       correct       — True if suspect correct + at least motive OR method correct
@@ -163,9 +209,19 @@ async def solve(req: SolveRequest) -> dict:
     quest = app_state.active_quests.get(req.session_id, QUEST_0)
     sol = quest.solution
 
+    # Fallback strict matching
     suspect_match = _norm(req.suspect) in _norm(sol.get("suspect", ""))
     motive_match  = _norm(req.motive)  in _norm(sol.get("motive",  ""))
     method_match  = _norm(req.method)  in _norm(sol.get("method",  ""))
+
+    api_key = os.getenv("MISTRAL_API_KEY", "").strip()
+    if api_key:
+        client = Mistral(api_key=api_key)
+        llm_res = _llm_validate_solution(client, req, sol)
+        if llm_res:
+            suspect_match = llm_res.get("suspect_match", suspect_match)
+            motive_match  = llm_res.get("motive_match", motive_match)
+            method_match  = llm_res.get("method_match", method_match)
 
     correct = suspect_match and (motive_match or method_match)
 

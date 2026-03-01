@@ -13,6 +13,8 @@ Falls back to QUEST_0 on any API failure, always returns a valid Quest.
 import json
 import os
 import random
+import time
+import wandb
 
 from mistralai import Mistral
 
@@ -202,46 +204,83 @@ def generate_quest(model: str | None = None) -> Quest:
     if resolved == "finetuned":
         resolved = MODEL_FINETUNED
 
+    start_time = time.perf_counter()
+    retry_count = 0
+    fallback_used = False
+    generated_quest = None
+
     # Static fallback — no API call
     if resolved == MODEL_QUEST_0:
         print("[GameMaster] mode=quest_0 — returning QUEST_0")
-        return QUEST_0
+        generated_quest = QUEST_0
+        fallback_used = True
+    else:
+        api_key = os.getenv("MISTRAL_API_KEY", "").strip()
+        if not api_key:
+            print("[GameMaster] No MISTRAL_API_KEY — returning QUEST_0")
+            generated_quest = QUEST_0
+            fallback_used = True
+        else:
+            print(f"[GameMaster] Generating quest with model={resolved}")
+            client = Mistral(api_key=api_key)
+            premise = random.choice(_PREMISES)
 
-    api_key = os.getenv("MISTRAL_API_KEY", "").strip()
-    if not api_key:
-        print("[GameMaster] No MISTRAL_API_KEY — returning QUEST_0")
-        return QUEST_0
+            anchor_npcs = [
+                {"id": npc.id, "name": npc.name, "role": npc.role, "secret": npc.secret}
+                for npc_id, npc in NPCS.items()
+                if npc_id in ANCHOR_NPC_IDS
+            ]
+            user_prompt = _build_user_prompt(premise, anchor_npcs)
 
-    print(f"[GameMaster] Generating quest with model={resolved}")
-    client = Mistral(api_key=api_key)
-    premise = random.choice(_PREMISES)
+            for attempt in range(1, MAX_RETRIES + 1):
+                try:
+                    retry_count = attempt - 1
+                    completion = client.chat.complete(
+                        model=resolved,
+                        messages=[
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "user",   "content": user_prompt},
+                        ],
+                        response_format={"type": "json_object"},
+                        temperature=0.85,
+                        max_tokens=1500,
+                    )
+                    raw = completion.choices[0].message.content or ""
+                    data = json.loads(raw)
+                    generated_quest = _parse_quest(data)
+                    print(f"[GameMaster] Quest generated: {generated_quest.quest_id} — {generated_quest.title}")
+                    break
+                except Exception as e:
+                    print(f"[GameMaster] Attempt {attempt}/{MAX_RETRIES} failed ({resolved}): {e}")
 
-    anchor_npcs = [
-        {"id": npc.id, "name": npc.name, "role": npc.role, "secret": npc.secret}
-        for npc_id, npc in NPCS.items()
-        if npc_id in ANCHOR_NPC_IDS
-    ]
-    user_prompt = _build_user_prompt(premise, anchor_npcs)
+            if generated_quest is None:
+                print(f"[GameMaster] All attempts failed ({resolved}) — returning QUEST_0 fallback")
+                generated_quest = QUEST_0
+                fallback_used = True
 
-    for attempt in range(1, MAX_RETRIES + 1):
+    latency_ms = int((time.perf_counter() - start_time) * 1000)
+
+    # W&B Logging
+    wandb_key = os.getenv("WANDB_API_KEY", "").strip()
+    if wandb_key:
         try:
-            completion = client.chat.complete(
-                model=resolved,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user",   "content": user_prompt},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.85,
-                max_tokens=1500,
-            )
-            raw = completion.choices[0].message.content or ""
-            data = json.loads(raw)
-            quest = _parse_quest(data)
-            print(f"[GameMaster] Quest generated: {quest.quest_id} — {quest.title}")
-            return quest
+            # We don't want to block the request on WandB initialization
+            if not wandb.run:
+                wandb.init(
+                    project=os.getenv("WANDB_PROJECT", "les-mysteres-de-paris"),
+                    name="quest-generation",
+                    job_type="generation",
+                    reinit=True
+                )
+            
+            wandb.log({
+                "quest_id": generated_quest.quest_id,
+                "latency_ms": latency_ms,
+                "retry_count": retry_count,
+                "fallback_used": fallback_used,
+                "model_used": resolved
+            })
         except Exception as e:
-            print(f"[GameMaster] Attempt {attempt}/{MAX_RETRIES} failed ({resolved}): {e}")
+            print(f"[GameMaster] W&B logging failed: {e}")
 
-    print(f"[GameMaster] All attempts failed ({resolved}) — returning QUEST_0 fallback")
-    return QUEST_0
+    return generated_quest
