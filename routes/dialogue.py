@@ -1,4 +1,5 @@
 import os
+import time
 
 import wandb
 from fastapi import APIRouter, HTTPException
@@ -9,6 +10,48 @@ import state as app_state
 from agents.npcs import NPCS, QUEST_0
 
 router = APIRouter(prefix="/dialogue", tags=["dialogue"])
+
+# ---------------------------------------------------------------------------
+# W&B dialogue table — accumulates rows across turns, flushed periodically
+# ---------------------------------------------------------------------------
+_dialogue_table: wandb.Table | None = None
+
+
+def _get_dialogue_table() -> wandb.Table:
+    global _dialogue_table
+    if _dialogue_table is None:
+        _dialogue_table = wandb.Table(
+            columns=[
+                "session_id", "npc_id", "model_variant", "turn",
+                "player_message", "npc_reply", "latency_ms", "reply_length",
+                "anachronism_score", "period_score",
+            ]
+        )
+    return _dialogue_table
+
+
+# Modern words that should NOT appear in 1900 Paris — simple heuristic
+_MODERN_WORDS = {
+    "computer", "internet", "phone", "smartphone", "email", "website",
+    "laptop", "television", "radio", "airplane", "nuclear", "plastic",
+    "okay", "ok", "gonna", "wanna", "awesome", "totally", "literally",
+    "selfie", "video", "app", "online", "digital", "robot", "laser",
+}
+
+_PERIOD_WORDS = {
+    "monsieur", "madame", "mademoiselle", "sacré", "mon dieu", "voilà",
+    "boulangerie", "gendarmerie", "sûreté", "belle époque", "exposition",
+    "moulin", "montmartre", "louvre", "paris", "n'est-ce pas", "gaslamp",
+    "carriage", "telegram", "telegraph", "affair", "dreyfus", "absinthe",
+}
+
+
+def _score_reply(reply: str) -> tuple[int, int]:
+    """Return (anachronism_count, period_word_count) for the reply."""
+    lower = reply.lower()
+    anachronisms = sum(1 for w in _MODERN_WORDS if w in lower)
+    period_hits = sum(1 for w in _PERIOD_WORDS if w in lower)
+    return anachronisms, period_hits
 
 
 # ---------------------------------------------------------------------------
@@ -176,18 +219,21 @@ async def chat_with_npc(req: DialogueRequest) -> DialogueResponse:
     messages.extend(_history[history_key])
     messages.append({"role": "user", "content": req.player_message})
 
+    t0 = time.monotonic()
     completion = client.chat.complete(
         model=model,
         messages=messages,
         max_tokens=200,
         temperature=0.85,
     )
+    latency_ms = int((time.monotonic() - t0) * 1000)
 
     npc_reply = completion.choices[0].message.content or "*(silence)*"
 
     # Persist turn in history (without the system prompt)
     _history[history_key].append({"role": "user", "content": req.player_message})
     _history[history_key].append({"role": "assistant", "content": npc_reply})
+    turn_number = len(_history[history_key]) // 2  # each turn = 1 user + 1 assistant
 
     # W&B logging — lightweight, non-blocking
     _log_to_wandb(
@@ -197,6 +243,8 @@ async def chat_with_npc(req: DialogueRequest) -> DialogueResponse:
         model_used=model,
         player_message=req.player_message,
         npc_reply=npc_reply,
+        latency_ms=latency_ms,
+        turn_number=turn_number,
     )
 
     return DialogueResponse(
@@ -205,6 +253,69 @@ async def chat_with_npc(req: DialogueRequest) -> DialogueResponse:
         response=npc_reply,
         model_used=model,
     )
+
+
+class SummarizeRequest(BaseModel):
+    session_id: str
+    npc_id: str
+    npc_name: str
+    # Full conversation so far: list of {role: "player"|"npc", content: str}
+    conversation: list[dict]
+
+
+class SummarizeResponse(BaseModel):
+    summary: str
+
+
+_SUMMARIZE_SYSTEM = """\
+You are a sharp detective's assistant. Read the conversation between an investigator \
+and a witness in Belle Époque Paris (1900). Extract ONLY the factual investigative \
+clues the witness revealed — names, locations, times, motives, or suspicious details. \
+Ignore pleasantries, flirting, jokes, or anything that does not help solve the case.
+
+Write a single concise paragraph (1–2 sentences, max 80 words) in the style of an \
+investigator's field note. Begin with the witness's name. Be specific. \
+If the witness revealed NOTHING useful, reply with exactly: NO_CLUE\
+"""
+
+
+@router.post("/summarize", response_model=SummarizeResponse)
+async def summarize_clue(req: SummarizeRequest) -> SummarizeResponse:
+    """
+    Use Mistral to distil the NPC conversation into a crisp investigator's note.
+    Returns {summary} — a 1-2 sentence detective's journal entry.
+    Falls back to a generic note if the AI fails.
+    """
+    if not req.conversation:
+        return SummarizeResponse(summary="")
+
+    # Format conversation for the prompt
+    transcript_lines = []
+    for turn in req.conversation:
+        role_label = "Investigator" if turn.get("role") == "player" else req.npc_name
+        transcript_lines.append(f"{role_label}: {turn.get('content', '')}")
+    transcript = "\n".join(transcript_lines)
+
+    try:
+        client = _get_client()
+        completion = client.chat.complete(
+            model="mistral-small-latest",
+            messages=[
+                {"role": "system", "content": _SUMMARIZE_SYSTEM},
+                {
+                    "role": "user",
+                    "content": f"Witness: {req.npc_name}\n\nConversation:\n{transcript}\n\nWrite the field note now.",
+                },
+            ],
+            max_tokens=120,
+            temperature=0.3,
+        )
+        raw = (completion.choices[0].message.content or "").strip()
+        if raw == "NO_CLUE" or not raw:
+            return SummarizeResponse(summary="")
+        return SummarizeResponse(summary=raw)
+    except Exception:
+        return SummarizeResponse(summary=f"{req.npc_name} shared information that may be relevant to the investigation.")
 
 
 @router.delete("/history/{session_id}")
@@ -222,20 +333,45 @@ def _log_to_wandb(
     model_used: str,
     player_message: str,
     npc_reply: str,
+    latency_ms: int = 0,
+    turn_number: int = 1,
 ) -> None:
     try:
         if wandb.run is None:
             return
+
+        anachronism_count, period_score = _score_reply(npc_reply)
+
+        # --- Numeric metrics for W&B charts ---
         wandb.log(
             {
-                "session_id": session_id,
-                "npc_id": npc_id,
-                "model_variant": model_variant,
-                "model_used": model_used,
-                "player_message": player_message,
-                "npc_reply": npc_reply,
+                # Core performance metrics (these become chart lines)
                 "reply_length": len(npc_reply),
+                "latency_ms": latency_ms,
+                "anachronism_count": anachronism_count,
+                "period_authenticity_score": period_score,
+                "turn_number": turn_number,
+                # Model variant as 0/1 so it can be plotted
+                "is_finetuned": int(model_variant == "finetuned"),
             }
         )
+
+        # --- Dialogue table (browseable in W&B) ---
+        table = _get_dialogue_table()
+        table.add_data(
+            session_id,
+            npc_id,
+            model_variant,
+            turn_number,
+            player_message[:500],   # truncate for W&B column limits
+            npc_reply[:500],
+            latency_ms,
+            len(npc_reply),
+            anachronism_count,
+            period_score,
+        )
+        # Log updated table snapshot so W&B UI stays fresh
+        wandb.log({"dialogue_log": table})
+
     except Exception:
         pass  # Never let W&B crash the game
