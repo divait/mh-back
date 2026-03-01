@@ -1,8 +1,11 @@
 import os
 import time
+from typing import AsyncGenerator
 
+import httpx
 import wandb
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
 from mistralai import Mistral
 from pydantic import BaseModel
 
@@ -10,6 +13,59 @@ import state as app_state
 from agents.npcs import NPCS, QUEST_0
 
 router = APIRouter(prefix="/dialogue", tags=["dialogue"])
+
+# ---------------------------------------------------------------------------
+# ElevenLabs TTS Mapping
+# ---------------------------------------------------------------------------
+_VOICE_IDS = {
+    # Default selection of voices from ElevenLabs pre-mades
+    "inspector": "JBFqnCBsd6RMkjVDRZzb",      # George
+    "baker": "hpp4J3VqNfWAUOO0d1Us",          # Bella
+    "guard": "SOYHLrjzK2X1ezoPC6cr",          # Harry
+    "tavern_keeper": "cjVigY5qzO86Huf0OWal",  # Eric
+    "cabaret_dancer": "cgSgspJ2msm6clMCkdW9", # Jessica
+    "artist": "TX3LPaxmHKxFdv7VOQHJ",         # Liam
+    "default": "N2lVS1w4EtoT3dr4eOWO",        # Callum
+}
+
+@router.get("/tts")
+async def get_tts(text: str, npc_id: str):
+    """
+    Fetch TTS audio from ElevenLabs for the given text and NPC.
+    """
+    api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ElevenLabs API key not configured")
+
+    voice_id = _VOICE_IDS.get(npc_id, _VOICE_IDS["default"])
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}?optimize_streaming_latency=3"
+    
+    headers = {
+        "Accept": "audio/mpeg",
+        "xi-api-key": api_key,
+        "Content-Type": "application/json",
+    }
+    
+    data = {
+        "text": text,
+        "model_id": "eleven_turbo_v2_5",
+        "voice_settings": {
+            "stability": 0.5,
+            "similarity_boost": 0.75
+        }
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(url, headers=headers, json=data, timeout=30.0)
+            if response.status_code != 200:
+                print(f"[TTS] API Error {response.status_code}: {response.text}")
+                raise HTTPException(status_code=response.status_code, detail="TTS generation failed")
+                
+            return Response(content=response.content, media_type="audio/mpeg")
+        except Exception as e:
+            print(f"[TTS] Error for NPC '{npc_id}': {e}")
+            raise HTTPException(status_code=500, detail="TTS request failed")
 
 # ---------------------------------------------------------------------------
 # W&B dialogue table — accumulates rows across turns, flushed periodically
